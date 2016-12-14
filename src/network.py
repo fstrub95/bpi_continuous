@@ -1,10 +1,10 @@
 import tensorflow as tf
 from network_tools import *
 
-def build_multilayer_perceptron(input, layer_size, layers=None):
+def create_layers(layer_size)
+    return [Layer(layer_size[i], layer_size[i + 1]) for i in range(len(layer_size) - 1)]
 
-    if layers is None:
-        layers = [Layer(layer_size[i], layer_size[i + 1]) for i in range(len(layer_size) - 1)]
+def build_multilayer_perceptron(input, layers):
 
     output = None
     for layer in layers[:-1]:
@@ -32,40 +32,46 @@ class Network(object):
 
         self.state = tf.placeholder(tf.float32, [None, state_size], name='state')
         self.action = tf.placeholder(tf.float32, [None, action_size], name='action')
-        self.reward = tf.placeholder(tf.float32, [None,], name='state')
+        self.reward = tf.placeholder(tf.float32, [None], name='state')
+
+        self.next_action = tf.placeholder(tf.float32, [None, action_size], name='next_action')
         self.next_state = tf.placeholder(tf.float32, [None, state_size], name='next_state')
 
         self.gamma = tf.constant(tf.float32, 0.9, "gamma")
 
         state_action = tf.concat(1, (self.state,self.action))
 
-        def build_q
-
         # Zero order: Value function
         with tf.name_scope('value_fct'):
-            zero_order_state, _ = build_multilayer_perceptron(self.state, [20, 1])
-            zero_order_next_state, _ = build_multilayer_perceptron(self.next_state, [20, 1])
+            value_fct_layers = create_layers([state_size, 20, 1])
+            zero_order_state = build_multilayer_perceptron(self.state, value_fct_layers)
+            zero_order_next_state = build_multilayer_perceptron(self.next_state, value_fct_layers)
 
         # First order: Gradient
         with tf.name_scope('grad'):
-            self.grad = build_multilayer_perceptron(state_action, [20, action_size])
+            grad_layers = create_layers([state_size, 20, action_size])
+            self.grad = build_multilayer_perceptron(state_action, grad_layers )
 
         # Policy network
         with tf.name_scope('policy'):
-            policy_state = build_multilayer_perceptron(self.state, [20, action_size])
-            policy_next_state = build_multilayer_perceptron(self.state, [20, action_size])
+            policy_layers = create_layers([state_size, 20, action_size])
+            policy_state = build_multilayer_perceptron(self.state, policy_layers)
+            policy_next_state = build_multilayer_perceptron(self.state, policy_layers)
 
+        # Compute the taylor first order
         with tf.name_scope('first_order'):
+            diff_state = tf.stop_gradient(self.action - policy_state)
+            diff_next_state = tf.stop_gradient(self.action - policy_next_state)
             first_order_state = dot_product(self.grad, self.action - policy_state)
             first_order_next_state = dot_product(self.grad, self.action - policy_next_state)
 
 
-        self.output = zero_order_state + first_order_state
-        self.target = self.reward + self.gamma*(zero_order_next_state + first_order_next_state)
+        self.q_output = zero_order_state + first_order_state
+        self.q_target = self.reward + self.gamma*(zero_order_next_state + first_order_next_state)
 
-        self.qloss = tf.nn.l2_loss(self.output - self.target)
+        self.q_loss = tf.nn.l2_loss(self.q_output - self.q_target)
 
-        self.optimizer = tf.train.AdamOptimizer().minimize(self.qloss)
+        self.optimizer = tf.train.AdamOptimizer().minimize(self.q_loss)
 
 
         # Second order: Hessian
