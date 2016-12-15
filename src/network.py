@@ -1,167 +1,201 @@
 import tensorflow as tf
+import numpy as np
+
 from network_tools import *
-
-def create_layers(layer_size)
-    return [Layer(layer_size[i], layer_size[i + 1]) for i in range(len(layer_size) - 1)]
-
-def build_multilayer_perceptron(input, layers):
-
-    output = None
-    for layer in layers[:-1]:
-        output = tf.matmul(input, layer.w) + layer.b
-        output = tf.nn.elu(output)
-
-        # Regularisation
-        #output = tf.nn.dropout(y_Qa, self.dropout)
-        #output = tf.nn.dropout(y_Qa, self.dropout)
-
-        input = output
-
-    last_layer = layers[-1]
-
-    output = tf.matmul(input, last_layer.w) + last_layer.b
-
-    return output, layers
-
-
+from iterator import *
 
 
 class Network(object):
 
-    def __init__(self, state_size, action_size):
+    def __init__(self, state_size, action_size, layer_size):
+
+        self.state_size = state_size
+        self.action_size = action_size
 
         self.state = tf.placeholder(tf.float32, [None, state_size], name='state')
         self.action = tf.placeholder(tf.float32, [None, action_size], name='action')
-        self.reward = tf.placeholder(tf.float32, [None], name='state')
-
-        self.next_action = tf.placeholder(tf.float32, [None, action_size], name='next_action')
         self.next_state = tf.placeholder(tf.float32, [None, state_size], name='next_state')
+        self.reward = tf.placeholder(tf.float32, [None], name='reward')
 
-        self.gamma = tf.constant(tf.float32, 0.9, "gamma")
-
-        state_action = tf.concat(1, (self.state,self.action))
+        self.gamma = 0.99
+        self.alpha = 1
 
         # Zero order: Value function
-        with tf.name_scope('value_fct'):
-            value_fct_layers = create_layers([state_size, 20, 1])
-            zero_order_state = build_multilayer_perceptron(self.state, value_fct_layers)
-            zero_order_next_state = build_multilayer_perceptron(self.next_state, value_fct_layers)
+        with tf.name_scope('zero_order'):
+            value_fct_layers = create_layers([state_size] + layer_size + [1])
+            with tf.name_scope('value_state'):
+                zero_order = build_multilayer_perceptron(self.state, value_fct_layers)
+            with tf.name_scope('value_next_state'):
+                zero_order_next = build_multilayer_perceptron(self.next_state, value_fct_layers)
 
         # First order: Gradient
-        with tf.name_scope('grad'):
-            grad_layers = create_layers([state_size, 20, action_size])
-            self.grad = build_multilayer_perceptron(state_action, grad_layers )
+        with tf.name_scope('gradient'):
+            grad = build_multilayer_perceptron(self.state, create_layers([state_size] + layer_size + [action_size]))
+
+        # Second order: Hessian
+        # TODO
 
         # Policy network
         with tf.name_scope('policy'):
-            policy_layers = create_layers([state_size, 20, action_size])
-            policy_state = build_multilayer_perceptron(self.state, policy_layers)
-            policy_next_state = build_multilayer_perceptron(self.state, policy_layers)
+            policy_layer_size = [state_size] + layer_size + [action_size]
+            with tf.name_scope('current'):
+                self.policy = build_multilayer_perceptron(self.state, create_layers(policy_layer_size))
+            with tf.name_scope('old'): # Create a mirror policy that will be used
+                prev_policy = build_multilayer_perceptron(self.state, create_layers(policy_layer_size))
+                prev_policy = tf.stop_gradient(prev_policy)
 
         # Compute the taylor first order
         with tf.name_scope('first_order'):
-            diff_state = tf.stop_gradient(self.action - policy_state)
-            diff_next_state = tf.stop_gradient(self.action - policy_next_state)
-            first_order_state = dot_product(self.grad, self.action - policy_state)
-            first_order_next_state = dot_product(self.grad, self.action - policy_next_state)
+            diff = self.action - self.policy
+            diff = tf.stop_gradient(diff) # Prevent the policy network to be updated with q_loss
+            first_order = dot_product(grad, diff)
+
+        # Compute q-network loss
+        with tf.name_scope('q_loss'):
+            self.q_output = zero_order + first_order
+            self.q_target = self.reward + self.gamma*zero_order_next
+            self.q_loss = tf.nn.l2_loss(self.q_output - self.q_target)
+        self.q_optimizer = tf.train.AdamOptimizer().minimize(self.q_loss)
+
+        # Compute policy-network loss
+        with tf.name_scope('policy_loss'):
+            self.pi_output = self.policy
+            self.pi_target = prev_policy + self.alpha*tf.stop_gradient(grad) #TODO normalize by norm of grad
+            self.pi_loss = tf.nn.l2_loss(self.pi_output - self.pi_target)
+        self.pi_optimizer = tf.train.AdamOptimizer().minimize(self.pi_loss)
 
 
-        self.q_output = zero_order_state + first_order_state
-        self.q_target = self.reward + self.gamma*(zero_order_next_state + first_order_next_state)
+    def execute_q(self, sess, iterator, mini_batch=20, is_training=True):
 
-        self.q_loss = tf.nn.l2_loss(self.q_output - self.q_target)
+        target = [self.q_loss]
+        if is_training:
+            target.append(self.q_optimizer)
 
-        self.optimizer = tf.train.AdamOptimizer().minimize(self.q_loss)
-
-
-        # Second order: Hessian
+        return self.__execute(sess, iterator, mini_batch, target)
 
 
-        # QUESTION
-        # question_config = config["input"]["question"]
-        # if question_config["to_use"] == 'True':
-        #
-        #     self._question = tf.placeholder(tf.int32, [self.batch_size, None], name='question')
-        #     self._seq_length = tf.placeholder(tf.int32, [self.batch_size], name='seq_length')
-        #
-        #     tf.add_to_collection('inputs', self._question)
-        #     tf.add_to_collection('inputs', self._seq_length)
-        #
-        #     no_words = len(self.tokenizer.word2i)
-        #     word_emb = utils.get_embedding(self._question,
-        #                                    n_words=no_words,
-        #                                    n_dim=int(question_config["embedding_dim"]),
-        #                                    scope="word_embedding")
-        #
-        #     lstm_states = rnn.variable_length_LSTM(word_emb,
-        #                                            num_hidden=int(question_config["no_LSTM_hiddens"]),
-        #                                            seq_length=self._seq_length)
-        #
-        #     tf.add_to_collection('embedding', lstm_states)
-        #
-        # # CROP
-        # crop_config = config["input"]["crop"]
-        # if crop_config["to_use"] == 'True':
-        #     self._crop_fc8 = tf.placeholder(tf.float32, [self.batch_size, 1000], name='crop_fc8')
-        #     tf.add_to_collection('inputs', self._crop_fc8)
-        #     tf.add_to_collection('embedding', self._crop_fc8)
-        #
-        # # PICTURE
-        # picture_config = config["input"]["picture"]
-        # if picture_config["to_use"] == 'True':
-        #     self._picture_fc8 = tf.placeholder(tf.float32, [self.batch_size, 1000], name='picture_fc8')
-        #     tf.add_to_collection('inputs', self._picture_fc8)
-        #     tf.add_to_collection('embedding', self._picture_fc8)
-        #
-        # # CATEGORY
-        # category_config = config["input"]["category"]
-        # if category_config["to_use"] == 'True':
-        #     self._category = tf.placeholder(tf.int32, [self.batch_size], name='category')
-        #     tf.add_to_collection('inputs', self._category)
-        #
-        #     cat_emb = utils.get_embedding(self._category,
-        #                                   int(category_config["n_categories"]),
-        #                                   int(category_config["cat_embedding_dim"]),
-        #                                   scope="cat_embedding")
-        #
-        #     tf.add_to_collection('embedding', cat_emb)
-        #
-        # # SPATIAL
-        # spatial_config = config["input"]["spatial"]
-        # if spatial_config["to_use"] == 'True':
-        #     self._spatial = tf.placeholder(tf.float32, [self.batch_size, 8], name='spatial')
-        #     tf.add_to_collection('inputs', self._spatial)
-        #     tf.add_to_collection('embedding', self._spatial)
-        #
-        # # Compute te final embedding
-        # emb = tf.concat(1, tf.get_collection('embedding'))
-        #
-        # # OUTPUT
-        # num_classes = int(config["output"]["num_classes"])
-        # self._answer = tf.placeholder(tf.float32, [self.batch_size, num_classes], name='answer')
-        # tf.add_to_collection('inputs', self._answer)
-        #
-        # with tf.variable_scope('mlp'):
-        #     # l1 = utils.residual_layer(emb, k=2, scope='res_l1', is_training=self._is_training)
-        #     num_hiddens = int(config['model']['MLP']['num_hiddens'])
-        #     l1 = utils.linear_relu(emb, num_hiddens, scope='l1')
-        #     self._pred = utils.softmax(utils.linear(l1, num_classes, scope='softmax'))
-        #
-        # self._loss = utils.cross_entropy(self._pred, self._answer)
-        # self._error = utils.error(self._pred, self._answer)
-        #
-        # print ('Model... build!')
-        #
-        # lrt = float(self.training_config["learning_rate"])
-        # print lrt
-        #
-        # train_vars = [v for v in tf.trainable_variables()]
-        # optimizer = tf.train.AdamOptimizer(learning_rate=lrt)
-        # gvs = optimizer.compute_gradients(self._loss, var_list=train_vars)
-        #
-        # clipped_gvs = [(tf.clip_by_norm(grad, 5), var) for grad, var in gvs]
-        #
-        # self._optimize = optimizer.apply_gradients(clipped_gvs)
+    def execute_policy(self, sess, iterator, mini_batch=20, is_training=True):
+
+        # Get policy network variables
+        policy_cur_variables = [v for v in tf.trainable_variables() if v.name.startswith("policy/current")]
+        policy_old_variables = [v for v in tf.trainable_variables() if v.name.startswith("policy/old")]
+
+        # TODO -> Fail! either bufferize policy or manage to copy-past weigth
+        # Copy variable values from current network to the old one
+        for cur, old in zip(policy_cur_variables, policy_old_variables):
+            old.assign(cur)
+
+        # define training/eval target
+        target = [self.pi_loss]
+        if is_training:
+            target.append(self.pi_optimizer)
+
+        return self.__execute(sess, iterator, mini_batch, target)
 
 
-network = Network(1,2)
+    def __execute(self, sess, iterator, mini_batch, target):
+
+        # Compute the number of required samples
+        n_iter = int(iterator.NoSamples()/mini_batch) + 1
+
+        loss = 0
+        for i in range(n_iter):
+
+            # Creating the mini-batch
+            batch = iterator.NextBatch(mini_batch)
+
+            # Running one step of the optimization method on the mini-batch
+            res = sess.run(target, feed_dict={
+                    self.state: batch.state,
+                    self.next_state: batch.next_state,
+                    self.action: batch.action,
+                    self.reward: batch.reward})
+
+            loss += res[0]
+        loss /= n_iter
+
+        return loss
+
+
+    def eval_next_action(self, sess, state):
+
+        # use the correct shape for the action
+        s = np.zeros((1,self.state_size))
+        s[0,:] = state
+
+        return sess.run(self.policy, feed_dict={
+            self.state: s,
+            self.next_state: np.zeros((1,self.state_size)),
+            self.action: np.zeros((1,self.action_size)),
+            self.reward: np.zeros(1)})[0] # Return one single action
+
+
+import gym
+from collections import namedtuple
+
+Sample = namedtuple('Sample', ['state', 'next_state', 'action', 'reward'])
+env = gym.make('MountainCarContinuous-v0')
+
+state_size = env.observation_space.shape[0]
+action_size = env.action_space.shape[0]
+
+network = Network(state_size,action_size, layer_size=[20, 20])
+
+
+
+def compute_samples(sess, network, env, no_episodes=1, max_length=200):
+
+    samples = []
+    for i_episode in range(no_episodes):
+        state = env.reset()
+        for t in range(max_length):
+
+            # sample the environment by using network policy
+            action = network.eval_next_action(sess, state)
+            next_state, reward, done, info = env.step(action)
+
+            one_sample = Sample(state=state, action=action, reward=reward, next_state=next_state)
+            samples.append(one_sample)
+
+            if done:
+                break
+
+    return samples
+
+
+
+# Define session
+with tf.Session() as sess:
+    writer = tf.train.SummaryWriter("/home/fstrub/Projects/bpi_continuous/graph_log", sess.graph)
+    sess.run(tf.initialize_all_variables())
+
+    samples = compute_samples(sess, network, env, no_episodes=20, max_length=50)
+
+    dataset_iterator = Dataset(samples)
+
+    print(network.execute_q(sess, iterator=dataset_iterator, mini_batch=2, is_training=False))
+    network.execute_q(sess, iterator=dataset_iterator, mini_batch=2, is_training=True)
+
+
+    network.execute_policy(sess, iterator=dataset_iterator, mini_batch=2, is_training=True)
+    print(network.execute_policy(sess, iterator=dataset_iterator, mini_batch=2, is_training=False))
+
+    network.execute_q(sess, iterator=dataset_iterator, mini_batch=2, is_training=True)
+    print(network.execute_q(sess, iterator=dataset_iterator, mini_batch=2, is_training=False))
+
+
+    network.execute_policy(sess, iterator=dataset_iterator, mini_batch=2, is_training=True)
+    print(network.execute_policy(sess, iterator=dataset_iterator, mini_batch=2, is_training=False))
+
+
+    for i_episode in range(5):
+        observation = env.reset()
+        for t in range(200):
+            env.render()
+            #print(observation)
+            action = network.eval_next_action(sess, observation)
+            observation, reward, done, info = env.step(action)
+            print(action)
+            if done:
+                print("Episode finished after {} timesteps".format(t + 1))
+                break
