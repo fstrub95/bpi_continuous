@@ -1,5 +1,6 @@
 import gym
 from collections import namedtuple
+import numpy as np
 
 Sample = namedtuple('Sample', ['state', 'next_state', 'action', 'reward'])
 
@@ -47,7 +48,7 @@ class GymWrapper(object):
             for t in range(max_length):
 
                 action = network.eval_next_action(sess, state)
-                print(action)
+                #print(action)
                 next_state, reward, done, info = self.env.step(action)
 
                 if display:
@@ -63,6 +64,8 @@ class GymWrapper(object):
                 print("After " + str(t+1) +  " steps, final reward: " + str(final_reward))
                 self.env.render(close=True)
 
-            rewards.append([t+1, final_reward])
+            rewards.append([final_reward, t+1])
 
-        return final_reward
+        rewards = np.array(rewards)
+
+        return (rewards[:,0].mean(), rewards[:,1].mean()), rewards

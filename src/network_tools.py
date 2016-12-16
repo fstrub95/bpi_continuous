@@ -33,7 +33,7 @@ def create_nlp(input, layer_size, is_training, activ="relu",  use_scope=False):
 
         # compute layer
         x = tflearn.fully_connected(x, layer, activation=activ, scope=scope_layer)
-        # output = standard_batch_norm(output, is_training, scope=scope_batch) # Uncomment to add batch normalization
+        x = standard_batch_norm(x, is_training, scope=scope_batch)
 
     # Output layer
     scope_layer = "output_layer" if use_scope else None
