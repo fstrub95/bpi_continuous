@@ -13,12 +13,12 @@ from inverted_pendulum import InvertedPendulumWrapper
 
 # BATCH INFO
 no_episodes = 50
-max_length = 100
+max_length = 200
 keep_ratio = 0.10
 
 # VALUE ITERATION INFO
-no_first_q_iteration = 3
-no_network_iteration = 4
+no_first_q_iteration = 4
+no_network_iteration = 10
 no_sampling_iteration = 10
 
 # TRAINING INFO
@@ -29,10 +29,12 @@ alpha = 1
 q_lrt = 0.01
 pi_lrt = 0.001
 
+
 if __name__ == '__main__':
 
     # Initialize environment
     gym = Sampler.create_from_gym_name('Pendulum-v0') #Sampler('Pendule-v0')
+    # gym = Sampler.create_from_gym_name('MountainCarContinuous-v0')  # Sampler('Pendule-v0')
     # gym = Sampler.create_from_perso_env(InvertedPendulumWrapper())  # Sampler('Pendule-v0')
 
     gym.compute_samples(no_episodes=no_episodes, max_length=max_length)
@@ -55,15 +57,10 @@ if __name__ == '__main__':
         writer = tf.summary.FileWriter("/home/fstrub/Projects/bpi_continuous/graph_log", sess.graph)
         sess.run(tf.global_variables_initializer())
 
-        ### Pi-network Learn random policy
-        samples = gym.compute_samples(no_episodes=no_episodes, max_length=max_length)
-        #network.train_policy(sess, iterator=Dataset(samples), mini_batch=mini_batch_size)
-        #gym.evaluate(sess=sess, network=network, max_length=max_length, display=True)
-
         #######################
         # First round
         ######################
-        #samples = gym.compute_samples(sess=sess, network=network, no_episodes=no_episodes, max_length=max_length)
+        samples = gym.compute_samples(no_episodes=no_episodes, max_length=max_length)  # Random sampling
         dataset_iterator = Dataset(samples)
 
         ### Q-network
@@ -77,8 +74,8 @@ if __name__ == '__main__':
         network.train_policy(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
 
         ### Evaluate
-        gym.evaluate(sess=sess, network=network, max_length=50, display=True)
-        res, _ = gym.evaluate(sess=sess, no_episodes=5, network=network, max_length=max_length, display=False)
+        gym.evaluate(sess=sess, network=network, max_length=max_length, display=True)
+        res, _ = gym.evaluate(sess=sess, no_episodes=50, network=network, max_length=max_length, display=False)
         print("step 0 \t Reward/time : " + str(res))
 
         #######################
@@ -98,8 +95,8 @@ if __name__ == '__main__':
                 network.train_policy(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
 
             # Evaluate
-            res, _ = gym.evaluate(sess=sess, no_episodes=5, network=network, max_length=max_length, display=False)
-            print("step "+ str(t) + " \t Reward/time : " + str(res))
+            res, _ = gym.evaluate(sess=sess, no_episodes=10, network=network, max_length=max_length, display=False)
+            print("step " + str(t+1) + " \t Reward/time : " + str(res))
 
             gym.evaluate(sess=sess, network=network, max_length=max_length, display=True)
 

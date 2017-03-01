@@ -68,7 +68,7 @@ class Network(object):
 
         with tf.variable_scope('q_loss'):
             self.q_loss = tf.nn.l2_loss(self.q_output - self.q_target)
-        self.q_optimizer = tf.train.RMSPropOptimizer(learning_rate=q_lrt).minimize(self.q_loss)
+        self.q_optimizer = tf.train.AdamOptimizer(learning_rate=q_lrt).minimize(self.q_loss)
 
         # Compute policy-network loss
         with tf.variable_scope('policy_output'):
@@ -80,13 +80,13 @@ class Network(object):
 
         with tf.variable_scope('policy_loss'):
             self.pi_loss = tf.nn.l2_loss(self.pi_output - self.pi_target)
-        self.pi_optimizer = tf.train.RMSPropOptimizer(learning_rate=pi_lrt).minimize(self.pi_loss)
+        self.pi_optimizer = tf.train.AdamOptimizer(learning_rate=pi_lrt).minimize(self.pi_loss)
 
     def train_q(self, sess, iterator, mini_batch=20):
         return self.__execute_q(sess, iterator, mini_batch, is_training=True)
 
     def eval_q(self, sess, iterator, mini_batch=100):
-        self.__execute_q(sess, iterator, mini_batch, is_training=False)
+        return self.__execute_q(sess, iterator, mini_batch, is_training=False)
 
     def __execute_q(self, sess, iterator, mini_batch, is_training=True):
 
