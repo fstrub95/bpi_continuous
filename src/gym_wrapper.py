@@ -5,7 +5,6 @@ import numpy as np
 Sample = namedtuple('Sample', ['state', 'next_state', 'action', 'reward'])
 
 
-
 class Sampler(object):
 
     @classmethod
@@ -62,7 +61,7 @@ class Sampler(object):
             for t in range(max_length):
 
                 action = network.eval_next_action(sess, state)
-                #print(action)
+                print(action)
                 next_state, reward, done, info = self.env.step(action)
 
                 if display:
@@ -75,7 +74,7 @@ class Sampler(object):
                     break
 
             if display:
-                print("After " + str(t+1) +  " steps, final reward: " + str(final_reward))
+                print("After " + str(t+1) + " steps, final reward: " + str(final_reward))
                 self.env.render(close=True)
 
             rewards.append([final_reward, t+1])

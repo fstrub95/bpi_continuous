@@ -14,28 +14,28 @@ from inverted_pendulum import InvertedPendulumWrapper
 # BATCH INFO
 no_episodes = 50
 max_length = 100
-keep_ratio = 0.20
+keep_ratio = 0.10
 
 # VALUE ITERATION INFO
-no_first_q_iteration = 5
-no_network_iteration = 2
-no_sampling_iteration = 4
+no_first_q_iteration = 3
+no_network_iteration = 4
+no_sampling_iteration = 10
 
 # TRAINING INFO
-layer_size=[64]
+layer_size = [32]
 mini_batch_size = 64
 gamma = 0.9
 alpha = 1
-q_lrt=0.001
-pi_lrt=0.0001
+q_lrt = 0.01
+pi_lrt = 0.001
 
 if __name__ == '__main__':
 
     # Initialize environment
-    # gym = Sampler.create_from_gym_name('Pendule-v0') #Sampler('Pendule-v0')
-    gym = Sampler.create_from_perso_env(InvertedPendulumWrapper())  # Sampler('Pendule-v0')
+    gym = Sampler.create_from_gym_name('Pendulum-v0') #Sampler('Pendule-v0')
+    # gym = Sampler.create_from_perso_env(InvertedPendulumWrapper())  # Sampler('Pendule-v0')
 
-#    gym.compute_samples(no_episodes=no_episodes, max_length=max_length)
+    gym.compute_samples(no_episodes=no_episodes, max_length=max_length)
 
     # Initialize network
     network = Network(gym.state_size, gym.action_size,
@@ -57,24 +57,24 @@ if __name__ == '__main__':
 
         ### Pi-network Learn random policy
         samples = gym.compute_samples(no_episodes=no_episodes, max_length=max_length)
-        network.execute_policy(sess, iterator=Dataset(samples), mini_batch=mini_batch_size, is_training=True)
-
+        #network.train_policy(sess, iterator=Dataset(samples), mini_batch=mini_batch_size)
+        #gym.evaluate(sess=sess, network=network, max_length=max_length, display=True)
 
         #######################
         # First round
         ######################
-        samples = gym.compute_samples(sess=sess, network=network, no_episodes=no_episodes, max_length=max_length)
+        #samples = gym.compute_samples(sess=sess, network=network, no_episodes=no_episodes, max_length=max_length)
         dataset_iterator = Dataset(samples)
 
         ### Q-network
         for _ in range(no_first_q_iteration):
-            network.execute_q(sess, iterator=dataset_iterator, mini_batch=mini_batch_size, is_training=True)
+            network.train_q(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
 
-        l2 = network.execute_q(sess, iterator=dataset_iterator, mini_batch=mini_batch_size, is_training=False)
+        l2 = network.eval_q(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
         print("First Q error: " + str(l2))
 
         ### Pi-network
-        network.execute_policy(sess, iterator=dataset_iterator, mini_batch=mini_batch_size, is_training=True)
+        network.train_policy(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
 
         ### Evaluate
         gym.evaluate(sess=sess, network=network, max_length=50, display=True)
@@ -94,8 +94,8 @@ if __name__ == '__main__':
 
             # Train
             for _ in range(no_network_iteration):
-                network.execute_q(sess, iterator=dataset_iterator, mini_batch=mini_batch_size, is_training=True)
-                network.execute_policy(sess, iterator=dataset_iterator, mini_batch=mini_batch_size, is_training=True)
+                network.train_q(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
+                network.train_policy(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
 
             # Evaluate
             res, _ = gym.evaluate(sess=sess, no_episodes=5, network=network, max_length=max_length, display=False)

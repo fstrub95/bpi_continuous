@@ -9,7 +9,7 @@ def dot_product(x, y):
 
 def standard_batch_norm(x, is_training, name='batch_normalization', scope=None):
     # avoid using batch_normalization during evaluation
-    return  tf.cond(is_training,
+    return tf.cond(is_training,
                     lambda: tflearn.layers.normalization.batch_normalization(x, name=name, scope=scope),
                     lambda: x,
                     name="cond_"+name)
@@ -24,14 +24,14 @@ def create_nlp(input, layer_size, is_training, activ="relu",  use_scope=False):
         # Compute scope if required
         if use_scope:
             scope_layer = "layer_" + str(i)
-            scope_batch = "batch_normalization_1_" + str(i)
+            # scope_batch = "batch_normalization_1_" + str(i)
         else:
             scope_layer = None
-            scope_batch = None
+            # scope_batch = None
 
         # compute layer
         x = tflearn.fully_connected(x, layer, activation=activ, scope=scope_layer)
-        x = standard_batch_norm(x, is_training, scope=scope_batch)
+        # x = standard_batch_norm(x, is_training, scope=scope_batch)
 
     # Output layer
     scope_layer = "output_layer" if use_scope else None
