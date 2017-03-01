@@ -4,11 +4,25 @@ import numpy as np
 
 Sample = namedtuple('Sample', ['state', 'next_state', 'action', 'reward'])
 
-class GymWrapper(object):
-    def __init__(self, gym_name):
-        self.env = gym.make(gym_name)
-        self.state_size = self.env.observation_space.shape[0]
-        self.action_size = self.env.action_space.shape[0]
+
+
+class Sampler(object):
+
+    @classmethod
+    def create_from_gym_name(cls, gym_name):
+        env = gym.make(gym_name)
+        state_size = env.observation_space.shape[0]
+        action_size = env.action_space.shape[0]
+        return cls(env, state_size, action_size)
+
+    @classmethod
+    def create_from_perso_env(cls, env):
+        return cls(env, env.state_size, env.action_size)
+
+    def __init__(self, env, state_size, action_size):
+        self.env = env
+        self.state_size = state_size
+        self.action_size = action_size
 
     def compute_samples(self, sess=None, network=None, no_episodes=5, max_length=200):
 

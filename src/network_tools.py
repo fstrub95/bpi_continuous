@@ -1,8 +1,6 @@
 import tensorflow as tf
 import tflearn
 
-from math import sqrt
-
 
 def dot_product(x, y):
     with tf.name_scope('dot_product'):

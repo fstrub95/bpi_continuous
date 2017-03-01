@@ -5,6 +5,7 @@ import random as rd
 from network import *
 from gym_wrapper import *
 from iterator import *
+from inverted_pendulum import InvertedPendulumWrapper
 
 
 
@@ -21,9 +22,9 @@ no_network_iteration = 2
 no_sampling_iteration = 4
 
 # TRAINING INFO
-layer_size=[64, 64]
+layer_size=[64]
 mini_batch_size = 64
-gamma = 0.99
+gamma = 0.9
 alpha = 1
 q_lrt=0.001
 pi_lrt=0.0001
@@ -31,7 +32,10 @@ pi_lrt=0.0001
 if __name__ == '__main__':
 
     # Initialize environment
-    gym = GymWrapper('MountainCarContinuous-v0')
+    # gym = Sampler.create_from_gym_name('Pendule-v0') #Sampler('Pendule-v0')
+    gym = Sampler.create_from_perso_env(InvertedPendulumWrapper())  # Sampler('Pendule-v0')
+
+#    gym.compute_samples(no_episodes=no_episodes, max_length=max_length)
 
     # Initialize network
     network = Network(gym.state_size, gym.action_size,
@@ -45,24 +49,22 @@ if __name__ == '__main__':
     print("Network built!")
 
 
-
-
-
-
-
-    # Define session
+    # Start training!
     with tf.Session() as sess:
 
         writer = tf.summary.FileWriter("/home/fstrub/Projects/bpi_continuous/graph_log", sess.graph)
         sess.run(tf.global_variables_initializer())
 
+        ### Pi-network Learn random policy
+        samples = gym.compute_samples(no_episodes=no_episodes, max_length=max_length)
+        network.execute_policy(sess, iterator=Dataset(samples), mini_batch=mini_batch_size, is_training=True)
 
-        samples = gym.compute_samples(sess=sess, network=network, no_episodes=no_episodes, max_length=max_length)
-        dataset_iterator = Dataset(samples)
 
         #######################
         # First round
         ######################
+        samples = gym.compute_samples(sess=sess, network=network, no_episodes=no_episodes, max_length=max_length)
+        dataset_iterator = Dataset(samples)
 
         ### Q-network
         for _ in range(no_first_q_iteration):
@@ -102,36 +104,3 @@ if __name__ == '__main__':
             gym.evaluate(sess=sess, network=network, max_length=max_length, display=True)
 
     print("Done!")
-
-    # Some doc...
-
-
-
-    # # Sample by using random policy
-    # samples = gym.compute_samples(no_episodes=50, max_length=50)
-    # dataset_iterator = Dataset(samples)
-    #
-    # # Train
-    # network.execute_q(sess, iterator=dataset_iterator, mini_batch=20, is_training=True)
-    # network.execute_policy(sess, iterator=dataset_iterator, mini_batch=20, is_training=True)
-    # network.execute_q(sess, iterator=dataset_iterator, mini_batch=20, is_training=True)
-    # network.execute_policy(sess, iterator=dataset_iterator, mini_batch=20, is_training=True)
-    #
-    # gym.evaluate(sess=sess, network=network, max_length=50, display=True)
-    # #res = gym.evaluate(sess=sess, network=network, no_episodes=5, gamma=0.99)  # to compute average reward/length
-    #
-    # ##############################################################
-    #
-    # # Sample by using network policy
-    # samples = gym.compute_samples(sess=sess, network=network, no_episodes=500, max_length=50)
-    # dataset_iterator = Dataset(samples)
-    #
-    # # Train
-    # network.execute_q(sess, iterator=dataset_iterator, mini_batch=20, is_training=True)
-    # network.execute_policy(sess, iterator=dataset_iterator, mini_batch=20, is_training=True)
-    # network.execute_q(sess, iterator=dataset_iterator, mini_batch=20, is_training=True)
-    # network.execute_policy(sess, iterator=dataset_iterator, mini_batch=20, is_training=True)
-    #
-    # gym.evaluate(sess=sess, network=network, display=True)
-    # #res = gym.evaluate(sess=sess, network=network, no_episodes=5, gamma=0.99)  # to compute average reward/length
-    # #print(res)
