@@ -13,7 +13,7 @@ from inverted_pendulum import InvertedPendulumWrapper
 
 # BATCH INFO
 no_episodes = 50
-max_length = 200
+max_length = 250
 keep_ratio = 0.10
 
 # VALUE ITERATION INFO
