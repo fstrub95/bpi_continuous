@@ -12,22 +12,22 @@ from inverted_pendulum import InvertedPendulumWrapper
 
 
 # BATCH INFO
-no_episodes = 50
-max_length = 200
-keep_ratio = 0.10
+no_episodes = 100
+max_length = 100
+keep_ratio = 0.20
 
 # VALUE ITERATION INFO
-no_first_q_iteration = 4
-no_network_iteration = 10
-no_sampling_iteration = 10
+no_first_q_iteration = 10
+no_network_iteration = 5
+no_sampling_iteration = 20
 
 # TRAINING INFO
-layer_size = [32]
+layer_size = [64, 64]
 mini_batch_size = 64
-gamma = 0.9
+gamma = 0.99
 alpha = 1
-q_lrt = 0.01
-pi_lrt = 0.001
+q_lrt = 0.005
+pi_lrt = 0.0005
 
 
 if __name__ == '__main__':
@@ -95,9 +95,9 @@ if __name__ == '__main__':
                 network.train_policy(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
 
             # Evaluate
-            res, _ = gym.evaluate(sess=sess, no_episodes=10, network=network, max_length=max_length, display=False)
+            res, _ = gym.evaluate(sess=sess, no_episodes=50, network=network, max_length=max_length, display=False)
             print("step " + str(t+1) + " \t Reward/time : " + str(res))
 
-            gym.evaluate(sess=sess, network=network, max_length=max_length, display=True)
+            gym.evaluate(sess=sess, network=network, max_length=max_length*4, display=True)
 
     print("Done!")
