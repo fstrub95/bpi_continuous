@@ -23,7 +23,7 @@ class Sampler(object):
         self.state_size = state_size
         self.action_size = action_size
 
-    def compute_samples(self, sess=None, network=None, no_episodes=5, max_length=200):
+    def compute_samples(self, sess=None, runner=None, policy=None, no_episodes=0, max_length=0, std=0.05):
 
         samples = []
         for i_episode in range(no_episodes):
@@ -34,7 +34,8 @@ class Sampler(object):
                 if sess is None:
                     action = self.env.action_space.sample()
                 else:
-                    action = network.eval_next_action(sess, state)
+                    action = runner.execute(sess, policy, {"state":[state]})[0]
+                    action += np.random.normal(action, [std]*len(action), len(action))
 
                 # Sample environment
                 next_state, reward, done, info = self.env.step(action)
@@ -50,7 +51,7 @@ class Sampler(object):
 
         return samples
 
-    def evaluate(self, sess, network, no_episodes=1, max_length=200, gamma=0.99, display=False):
+    def evaluate(self, sess, runner, policy, no_episodes, max_length, gamma, display=False):
 
         final_reward, t = 0, 0
         rewards = []
@@ -60,11 +61,11 @@ class Sampler(object):
 
             for t in range(max_length):
 
-                action = network.eval_next_action(sess, state)
-                # print(action)
+                action = runner.execute(sess, policy, {"state":[state]})[0]
                 next_state, reward, done, info = self.env.step(action)
 
                 if display:
+                    print(action)
                     self.env.render()
 
                 final_reward = reward + gamma*final_reward

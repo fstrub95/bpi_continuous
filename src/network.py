@@ -1,13 +1,61 @@
 import tensorflow as tf
 import numpy as np
-
+import itertools
 from network_tools import *
+
+#layer_size + [action_size]
+def create_q_network(state, action, policy, layer_size, taylor_order):
+
+    derivatives = []
+    taylor_decomposition = []
+
+    if taylor_order >= 0:
+        with tf.variable_scope("zero_order"):
+            with tf.variable_scope('V'):
+                zero_order = create_nlp(state, layer_size)
+        taylor_decomposition += [zero_order]
+
+    if taylor_order >= 1:
+        with tf.variable_scope('first_order'):
+            with tf.variable_scope('grad_q'):
+                grad_q = create_nlp(state, layer_size)
+            diff = action - policy
+            first_order = dot_product(grad_q, diff)
+        taylor_decomposition += [first_order]
+        derivatives += [grad_q]
+
+
+    if taylor_order >= 2:
+        with tf.variable_scope('first_order'):
+            pass
+            # Second order: Hessian
+            # TODO
+        taylor_decomposition += []
+        derivatives += []
+
+
+
+    with tf.variable_scope('Q'):
+        q_output = tf.add_n(taylor_decomposition)
+        q_output = tf.reshape(q_output, shape=[-1])
+
+    return q_output, derivatives
+
+
+def create_policy_network(state, layer_size):
+    policy = create_nlp(state, layer_size)
+
+    return policy
 
 
 
 class Network(object):
 
-    def __init__(self, state_size, action_size, layer_size, gamma=0.99, alpha=1, q_lrt=0.001, pi_lrt=0.0001):
+    def __init__(self, state_size, action_size, layer_size, gamma, alpha=1, taylor_order=1):
+
+        ####################
+        # Input parameters
+        ####################
 
         self.state_size = state_size
         self.action_size = action_size
@@ -16,145 +64,134 @@ class Network(object):
         self._action = tf.placeholder(tf.float32, [None, action_size], name='action')
         self._next_state = tf.placeholder(tf.float32, [None, state_size], name='next_state')
         self._reward = tf.placeholder(tf.float32, [None], name='reward')
-        self.reward = tf.expand_dims(self._reward, axis=1)
-
-        self._is_training = tf.placeholder(tf.bool, name="is_training")
+        #self._is_training = tf.placeholder(tf.bool, name="is_training")
 
         self.gamma = gamma
         self.alpha = alpha
+        self.tau = 0.1
 
-        # Zero order: Value function
-        with tf.variable_scope("zero_order") as zero_scope:
-            self.zero_order = create_nlp(self._state, layer_size + [action_size], use_scope=True, is_training=self._is_training)
-            zero_scope.reuse_variables()
-            self.zero_order_next = create_nlp(self._next_state, layer_size + [action_size], use_scope=True, is_training=self._is_training)
-
-
-        # First order: Gradient
-        with tf.variable_scope('q_gradient'):
-            self.grad = create_nlp(self._state, layer_size + [action_size], is_training=self._is_training)
-
-        # Second order: Hessian
-        # TODO
-
+        ####################
+        # Create networks
+        ####################
 
         # Policy network
         with tf.variable_scope('policy'):
             policy_layer_size = layer_size + [action_size]
 
             # Create a policy network that will be trained
-            with tf.variable_scope('current'):
-                self.policy = create_nlp(self._state, policy_layer_size, is_training=self._is_training)
+            with tf.variable_scope('policy_network'):
+                self.policy_output = create_policy_network(self._state, policy_layer_size)
 
             # Create a mirror policy to store the previous policy
-            with tf.variable_scope('mirror'):
-                self.mirror_policy = create_nlp(self._state, policy_layer_size, is_training=self._is_training)
-                self.mirror_policy = tf.stop_gradient(self.mirror_policy)
+            with tf.variable_scope('policy_mirror_network'):
+                self.policy_mirror = create_policy_network(self._state, policy_layer_size)
+                self.policy_mirror = tf.stop_gradient(self.policy_mirror)
 
-        # Compute the taylor first order
-        with tf.variable_scope('first_order'):
-            diff = self._action - self.policy
-            diff = tf.stop_gradient(diff)  # Prevent the policy network to be updated with q_loss
-            self.first_order = dot_product(self.grad, diff)
+        with tf.variable_scope('Q'):
+            q_layer_size =  layer_size + [action_size]
+            no_grad_policy = tf.stop_gradient(self.policy_output) # prevent to update the policy when training Q
 
-        # Compute q-network loss
-        with tf.variable_scope('q_output'):
-            self.q_output = self.zero_order + self.first_order
-            self.q_output = tf.reshape(self.q_output, shape=[-1])
+            # create the Q network
+            with tf.variable_scope("q_network"):
+                self.q_output, derivatives = create_q_network(self._state, self._action, no_grad_policy, q_layer_size, taylor_order=taylor_order)
 
-        with tf.variable_scope('q_target'):
-            self.q_target = self.reward + self.gamma*self.zero_order_next
-            self.q_target = tf.reshape(self.q_target, shape=[-1])
+            # create the Q target network (for next state). Note that taylor expansion is limited to 0 order
+            with tf.variable_scope("q_target_network"):
+                self.q_next, _ = create_q_network(self._next_state, None, no_grad_policy, q_layer_size, taylor_order=0)
+                self.q_next = tf.stop_gradient(self.q_next)
 
+        ####################
+        # Loss of networks
+        ####################
+
+        # Compute Q Loss
         with tf.variable_scope('q_loss'):
+            with tf.variable_scope('q_target'):
+                self.q_target = self._reward + self.gamma*self.q_next
+                self.q_target = tf.reshape(self.q_target, shape=[-1])
+
             self.q_loss = tf.nn.l2_loss(self.q_output - self.q_target)
-        self.q_optimizer = tf.train.AdamOptimizer(learning_rate=q_lrt).minimize(self.q_loss)
 
-        # Compute policy-network loss
-        with tf.variable_scope('policy_output'):
-            self.pi_output = tf.reshape(self.policy, shape=[-1])
-
-        with tf.variable_scope('policy_target'):
-            self.pi_target = self.mirror_policy + self.alpha*tf.stop_gradient(self.grad)  # TODO normalize by norm of grad
-            self.pi_target = tf.reshape(self.pi_target, shape=[-1])
-
+        # Compute policy Loss
         with tf.variable_scope('policy_loss'):
-            self.pi_loss = tf.nn.l2_loss(self.pi_output - self.pi_target)
-        self.pi_optimizer = tf.train.AdamOptimizer(learning_rate=pi_lrt).minimize(self.pi_loss)
+            with tf.variable_scope('policy_target'):
+                grad_q = derivatives[0]
+                grad_q = tf.stop_gradient(grad_q)
 
-    def train_q(self, sess, iterator, mini_batch=20):
-        return self.__execute_q(sess, iterator, mini_batch, is_training=True)
+                self.policy_target = self.policy_mirror + self.alpha * grad_q  # TODO normalize by norm of grad
 
-    def eval_q(self, sess, iterator, mini_batch=100):
-        return self.__execute_q(sess, iterator, mini_batch, is_training=False)
+            self.policy_loss = tf.nn.l2_loss(self.policy_output - self.policy_target)
 
-    def __execute_q(self, sess, iterator, mini_batch, is_training=True):
-
-        # define training/eval network output
-        target = [self.q_loss]
-        if is_training:
-            target.append(self.q_optimizer)
-
-        return self.__execute__(sess, iterator, mini_batch, target, is_training)
-
-    def train_policy(self, sess, iterator, mini_batch=20):
-        return self.__execute_policy(sess, iterator, mini_batch, is_training=True)
-
-    def eval_policy(self, sess, iterator, mini_batch=100):
-        return self.__execute_policy(sess, iterator, mini_batch, is_training=False)
-
-    def __execute_policy(self, sess, iterator, mini_batch, is_training):
+        ####################
+        # Update networks
+        ####################
 
         # Get policy network variables
-        policy_cur_variables = [v for v in tf.trainable_variables() if v.name.startswith("policy/current")]
-        policy_mir_variables = [v for v in tf.trainable_variables() if v.name.startswith("policy/mirror")]
-
-        # define training/eval network output
-        target = [self.pi_loss]
-        if is_training:
-            target.append(self.pi_optimizer)
+        with tf.variable_scope('policy_update'):
+            policy_cur_variables = [v for v in tf.trainable_variables() if v.name.startswith("policy/policy_network")]
+            policy_mir_variables = [v for v in tf.trainable_variables() if v.name.startswith("policy/policy_mirror_network")]
 
             # Copy variable values from current network to the old one
+            self.policy_parameters = []
             for cur, old in zip(policy_cur_variables, policy_mir_variables):
-                sess.run(old.assign(cur))
+                self.policy_parameters += [old.assign(self.tau*cur + (1-self.tau)*old)]
+                self.policy_update = tf.group(*self.policy_parameters)
 
-        return self.__execute__(sess, iterator, mini_batch, target, is_training)
+        # Get policy network variables
+        with tf.variable_scope('q_update'):
 
-    def __execute__(self, sess, iterator, mini_batch, target, is_training):
+            q_mir_variables = [v for v in tf.trainable_variables() if v.name.startswith("Q/q_target_network")]
+            q_mir_var_names = [v.name.replace("Q/q_target_network", "") for v in tf.trainable_variables() if v.name.startswith("Q/q_target_network")]
+
+            # Only update the variable that are used by the target network
+            q_cur_variables = [ v for v in tf.trainable_variables() if v.name.replace("Q/q_network", "") in q_mir_var_names]
+
+            # Copy variable values from current network to the old one
+            self.q_parameters = []
+            for cur, old in zip(q_cur_variables, q_mir_variables):
+                self.q_parameters += [old.assign(self.tau*cur + (1-self.tau)*old)]
+            self.q_update = tf.group(*self.q_parameters)
+
+        self.update_networks = tf.group(self.q_update, self.policy_update)
+
+
+class Runner(object):
+
+    def __init__(self, batch_size):
+        self.batch_size = batch_size
+
+    def eval_loss(self, sess, iterator, loss):
+        return self.__execute__(sess, iterator, loss, False)
+
+    def train(self, sess, iterator, optimizer):
+        return self.__execute__(sess, iterator, optimizer, True)
+
+    def __execute__(self, sess, iterator, output, is_training):
 
         # Compute the number of required samples
-        n_iter = int(iterator.NoSamples()/mini_batch) + 1
+        n_iter = int(iterator.no_samples / self.batch_size) + 1
 
         loss = 0
         for i in range(n_iter):
 
-            # Creating the mini-batch
-            batch = iterator.NextBatch(mini_batch)
+            # Creating the feed_dict
+            batch = iterator.next_batch(self.batch_size, shuffle=is_training)
+            #batch["is_training"] = is_training
+            tflearn.config.is_training(is_training=is_training, session=sess)
 
-            # Running one step of the optimization method on the mini-batch
-            res = sess.run(target, feed_dict={
-                    self._state: batch.state,
-                    self._next_state: batch.next_state,
-                    self._action: batch.action,
-                    self._reward: batch.reward,
-                    self._is_training: is_training})
-
-            loss += res[0]
+            # compute loss
+            res = self.execute(sess, output, batch)
+            if res is not None:
+                loss += res
         loss /= n_iter
+
+        # By default, there is no training
+        tflearn.config.is_training(is_training=False, session=sess)
 
         return loss
 
-    def eval_next_action(self, sess, state):
+    def execute(self, sess, output, sample):
+        return sess.run(output, feed_dict={ key+":0" : value for key, value in sample.items()})
 
-        # use the correct shape for the action
-        s = np.zeros((1, self.state_size))
-        s[0, :] = state
-
-        return sess.run(self.policy, feed_dict={
-            self._state: s,
-            self._next_state: np.zeros((1, self.state_size)),
-            self._action: np.zeros((1, self.action_size)),
-            self._reward: np.zeros(1),
-            self._is_training: False})[0]  # Return one single action
 
 

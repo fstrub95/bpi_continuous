@@ -14,7 +14,7 @@ from inverted_pendulum import InvertedPendulumWrapper
 # BATCH INFO
 no_episodes = 100
 max_length = 100
-keep_ratio = 0.20
+keep_ratio = 0.8
 
 # VALUE ITERATION INFO
 no_first_q_iteration = 10
@@ -23,11 +23,12 @@ no_sampling_iteration = 20
 
 # TRAINING INFO
 layer_size = [64, 64]
-mini_batch_size = 64
-gamma = 0.99
+mini_batch_size = 2
+gamma = 0.95
 alpha = 1
-q_lrt = 0.005
-pi_lrt = 0.0005
+q_lrt = 0.001
+pi_lrt = 0.001
+
 
 
 if __name__ == '__main__':
@@ -43,12 +44,19 @@ if __name__ == '__main__':
     network = Network(gym.state_size, gym.action_size,
                       layer_size=layer_size,
                       gamma=gamma,
-                      alpha=alpha,
-                      q_lrt=q_lrt,
-                      pi_lrt=pi_lrt,
-                      )
+                      alpha=alpha)
 
+    policy_optimizer = tf.group(
+        tf.train.AdamOptimizer(learning_rate=pi_lrt).minimize(network.q_loss),
+        network.q_update)
+
+    q_optimizer = tf.group(
+        tf.train.AdamOptimizer(learning_rate=pi_lrt).minimize(network.policy_loss),
+        network.policy_update)
+
+    runner = Runner(mini_batch_size)
     print("Network built!")
+
 
 
     # Start training!
@@ -57,47 +65,50 @@ if __name__ == '__main__':
         writer = tf.summary.FileWriter("/home/fstrub/Projects/bpi_continuous/graph_log", sess.graph)
         sess.run(tf.global_variables_initializer())
 
-        #######################
-        # First round
-        ######################
         samples = gym.compute_samples(no_episodes=no_episodes, max_length=max_length)  # Random sampling
         dataset_iterator = Dataset(samples)
 
-        ### Q-network
-        for _ in range(no_first_q_iteration):
-            network.train_q(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
+        #######################
+        # function evaluator
+        ######################
 
-        l2 = network.eval_q(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
-        print("First Q error: " + str(l2))
+        def evaluate(sess, gym, policy, runner, max_length, i=0):
+            ### Evaluate
+            l2 = runner.eval_loss(sess, iterator=dataset_iterator, loss=network.q_loss)
+            print("Q error: {}".format(l2))
 
-        ### Pi-network
-        network.train_policy(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
-
-        ### Evaluate
-        gym.evaluate(sess=sess, network=network, max_length=max_length, display=True)
-        res, _ = gym.evaluate(sess=sess, no_episodes=50, network=network, max_length=max_length, display=False)
-        print("step 0 \t Reward/time : " + str(res))
+            gym.evaluate(sess, runner, policy, gamma=gamma, no_episodes=1, max_length=200, display=True)
+            res, _ = gym.evaluate(sess, runner, policy, gamma=gamma, no_episodes=50, max_length=max_length, display=False)
+            print("step {} \t Reward/time : {}".format(i, res))
 
         #######################
-        # Next Round round
+        # First round
+        ######################
+        for _ in range(no_first_q_iteration):
+            runner.train(sess, iterator=dataset_iterator, optimizer=q_optimizer)
+            runner.execute(sess, output=network.update_networks, sample={})
+
+
+        evaluate(sess, gym, network.policy_output, runner, max_length)
+
+        #######################
+        # Next Rounds
         ######################
 
         for t in range(no_sampling_iteration-1):
 
-            # Resample
-            new_samples = gym.compute_samples(sess=sess, network=network, no_episodes=no_episodes, max_length=max_length)
+            # Resample (to optimize)
+            new_samples = gym.compute_samples(sess, runner, network.policy_output, no_episodes=no_episodes, max_length=max_length, std=0.05)
             old_samples = [s for s in samples if rd.random() < keep_ratio]
             samples = new_samples + old_samples
+            dataset_iterator = Dataset(samples)
 
             # Train
             for _ in range(no_network_iteration):
-                network.train_q(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
-                network.train_policy(sess, iterator=dataset_iterator, mini_batch=mini_batch_size)
+                runner.train(sess, iterator=dataset_iterator, optimizer=q_optimizer)
+                runner.train(sess, iterator=dataset_iterator, optimizer=policy_optimizer)
 
             # Evaluate
-            res, _ = gym.evaluate(sess=sess, no_episodes=50, network=network, max_length=max_length, display=False)
-            print("step " + str(t+1) + " \t Reward/time : " + str(res))
-
-            gym.evaluate(sess=sess, network=network, max_length=max_length*4, display=True)
+            evaluate(sess, gym, network.policy_output, runner, max_length, t+1)
 
     print("Done!")

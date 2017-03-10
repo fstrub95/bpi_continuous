@@ -35,29 +35,7 @@ class Dataset(object):
         self.index_epoch_completed = 0
 
 
-    def State(self):
-        return self.state
-
-    def Action(self):
-        return self.action
-
-    def NextState(self):
-        return self.next_state
-
-    def Reward(self):
-        return self.reward
-
-    def EpochCompleted(self):
-        return self.epoch_completed
-
-    def IndexEpochCompleted(self):
-        return self.index_epoch_completed
-
-    def NoSamples(self):
-        return self.no_samples
-
-
-    def NextBatch(self, size_batch, shuffle = True):
+    def next_batch(self, size_batch, shuffle = True):
 
         # return a minibatch of size sizeBatch
         start = self.index_epoch_completed
@@ -88,11 +66,12 @@ class Dataset(object):
 
         end = self.index_epoch_completed
 
-        return MiniBatch(
-            state=self.state[start:end],
-            next_state=self.next_state[start:end],
-            action=self.action[start:end],
-            reward=self.reward[start:end])
+        return {
+            "state":self.state[start:end],
+            "next_state":self.next_state[start:end],
+            "action":self.action[start:end],
+            "reward":self.reward[start:end]
+            }
 
 
 
