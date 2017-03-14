@@ -30,10 +30,21 @@ class Dataset(object):
             self.action[i] = sample.action
             self.reward[i] = sample.reward
 
+        self.__shuffle__()
 
         self.epoch_completed = 0
         self.index_epoch_completed = 0
 
+    def __shuffle__(self):
+        # inplace permutation
+        permute = np.arange(self.no_samples)
+        np.random.shuffle(permute)
+
+        # shuffle data
+        self.state = self.state[permute]
+        self.action = self.action[permute]
+        self.next_state = self.next_state[permute]
+        self.reward = self.reward[permute]
 
     def next_batch(self, size_batch, shuffle = True):
 
@@ -52,17 +63,7 @@ class Dataset(object):
             assert size_batch <= self.no_samples
 
             if shuffle:
-
-                #inplace permutation
-                permute = np.arange(self.no_samples)
-                np.random.shuffle(permute)
-
-                #shuffle data
-                self.state  = self.state[permute]
-                self.action  = self.action[permute]
-                self.next_state = self.next_state[permute]
-                self.reward = self.reward[permute]
-
+                self.__shuffle__()
 
         end = self.index_epoch_completed
 
@@ -72,7 +73,4 @@ class Dataset(object):
             "action":self.action[start:end],
             "reward":self.reward[start:end]
             }
-
-
-
 

@@ -14,8 +14,9 @@ def create_nlp(input, layer_size, activ="relu"):
     x = input
     for i, layer in enumerate(layer_size[:-1]):
         x = tflearn.fully_connected(x, layer, activation=activ)
-        x = tflearn.layers.normalization.batch_normalization(x)
+        # x = tflearn.layers.normalization.batch_normalization(x)
+
     x = tflearn.fully_connected(x, layer_size[-1], activation='linear')
-    x = tflearn.layers.normalization.batch_normalization(x)
+
 
     return x

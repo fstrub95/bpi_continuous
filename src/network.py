@@ -51,7 +51,7 @@ def create_policy_network(state, layer_size):
 
 class Network(object):
 
-    def __init__(self, state_size, action_size, layer_size, gamma, alpha=1, taylor_order=1):
+    def __init__(self, state_size, action_size, layer_size, gamma, tau, alpha, lmbda, taylor_order):
 
         ####################
         # Input parameters
@@ -64,11 +64,12 @@ class Network(object):
         self._action = tf.placeholder(tf.float32, [None, action_size], name='action')
         self._next_state = tf.placeholder(tf.float32, [None, state_size], name='next_state')
         self._reward = tf.placeholder(tf.float32, [None], name='reward')
+
+        self._tau = tf.placeholder_with_default(tau, shape=[], name='tau')
         #self._is_training = tf.placeholder(tf.bool, name="is_training")
 
         self.gamma = gamma
         self.alpha = alpha
-        self.tau = 0.1
 
         ####################
         # Create networks
@@ -112,6 +113,9 @@ class Network(object):
 
             self.q_loss = tf.nn.l2_loss(self.q_output - self.q_target)
 
+            self.q_loss_decay = [tf.nn.l2_loss(v) for v in tf.trainable_variables() if v.name.startswith("Q/q_network")]
+            self.q_loss_decay = self.q_loss + lmbda * tf.add_n(self.q_loss_decay)
+
         # Compute policy Loss
         with tf.variable_scope('policy_loss'):
             with tf.variable_scope('policy_target'):
@@ -121,6 +125,10 @@ class Network(object):
                 self.policy_target = self.policy_mirror + self.alpha * grad_q  # TODO normalize by norm of grad
 
             self.policy_loss = tf.nn.l2_loss(self.policy_output - self.policy_target)
+
+            self.policy_loss_decay = [tf.nn.l2_loss(v) for v in tf.trainable_variables() if v.name.startswith("policy/policy_network")]
+            self.policy_loss_decay = self.policy_loss + lmbda * tf.add_n(self.policy_loss_decay)
+
 
         ####################
         # Update networks
@@ -133,8 +141,8 @@ class Network(object):
 
             # Copy variable values from current network to the old one
             self.policy_parameters = []
-            for cur, old in zip(policy_cur_variables, policy_mir_variables):
-                self.policy_parameters += [old.assign(self.tau*cur + (1-self.tau)*old)]
+            for cur, target in zip(policy_cur_variables, policy_mir_variables):
+                self.policy_parameters += [target.assign(self._tau*cur + (1-self._tau)*target)]
                 self.policy_update = tf.group(*self.policy_parameters)
 
         # Get policy network variables
@@ -148,8 +156,8 @@ class Network(object):
 
             # Copy variable values from current network to the old one
             self.q_parameters = []
-            for cur, old in zip(q_cur_variables, q_mir_variables):
-                self.q_parameters += [old.assign(self.tau*cur + (1-self.tau)*old)]
+            for cur, target in zip(q_cur_variables, q_mir_variables):
+                self.q_parameters += [target.assign(self._tau*cur + (1-self._tau)*target)]
             self.q_update = tf.group(*self.q_parameters)
 
         self.update_networks = tf.group(self.q_update, self.policy_update)
