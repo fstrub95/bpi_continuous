@@ -3,65 +3,54 @@ import argparse
 import random as rd
 
 from network import *
+from evaluator import *
 from gym_wrapper import *
 from iterator import *
 from inverted_pendulum import InvertedPendulumWrapper
 
-
+from initial_policies import *
 
 
 
 # BATCH INFO
 no_episodes = 150
-max_length = 100
+max_length = 200
 keep_ratio = 0.9
 
 # VALUE ITERATION INFO
-no_first_q_iteration = 5
+no_pretrained_policy=0
+no_first_q_iteration = 3
 no_network_iteration = 5
 no_sampling_iteration = 10
 
 # TRAINING INFO
-layer_size = [64, 64]
+taylor_order = 1
+layer_size = [16, 16]
 mini_batch_size = 20
 gamma = 0.99
 alpha = 1
-tau=0.1
-lmbda=0.00
+tau=0.005
+lmbda=0.001
 q_lrt = 0.01
 pi_lrt = 0.001
+pi_lrt_pretrain=0.001
 
-
-def initial_pendulum_policy(state):
-    return [np.random.uniform(-2, 2)]
-
-
-def initial_moutain_car_policy(state):
-
-    position = state[0]
-    velocity = state[1]
-
-    if velocity > 0:
-        action = np.random.uniform(0,0.5)
-    else:
-        action = np.random.uniform(-0.5,0)
-
-    action += np.random.normal()*0.2
-    return [action]
-
-
+display = True
 
 if __name__ == '__main__':
 
     # Initialize environment
     gym = Sampler.create_from_gym_name('Pendulum-v0')
-    initial_policy = initial_pendulum_policy
+    initial_policy = initial_pendulum_policy()
 
     # gym = Sampler.create_from_gym_name('MountainCarContinuous-v0')
-    # initial_policy = initial_moutain_car_policy
+    # gym = Sampler.create_from_gym_name('CartPole-v0')
+    initial_policy = initial_moutain_car_policy(mean=0.5, std=0.01)
 
-    # gym = Sampler.create_from_perso_env(InvertedPendulumWrapper())  # Sampler('Pendule-v0')
-    #gym = Sampler.create_from_gym_name('InvertedPendulum-v1')
+    samples = gym.compute_samples(policy=initial_policy, no_episodes=no_episodes,
+                                  max_length=max_length, flatten=False)
+
+
 
 
     # # Initialize network
@@ -71,67 +60,95 @@ if __name__ == '__main__':
                       gamma=gamma,
                       alpha=alpha,
                       lmbda=lmbda,
-                      taylor_order=1)
+                      taylor_order=taylor_order)
 
     q_optimizer = tf.train.AdamOptimizer(learning_rate=q_lrt).minimize(network.q_loss)
     policy_optimizer = tf.train.AdamOptimizer(learning_rate=pi_lrt).minimize(network.policy_loss)
+    pretrained_policy_optimizer = tf.train.AdamOptimizer(learning_rate=pi_lrt_pretrain).minimize(network.pretrain_policy_loss)
 
-    # q_optimizer = tf.group(
-    #    tf.train.AdamOptimizer(learning_rate=q_lrt).minimize(network.q_loss),
-    #    network.q_update)
+
+    #summary_plotter = network.merged
+    print("Network built!")
 
     #policy_optimizer = tf.group(
     #    tf.train.AdamOptimizer(learning_rate=pi_lrt).minimize(network.policy_loss),
     #    network.policy_update)
 
-    runner = Runner(mini_batch_size)
-    print("Network built!")
 
 
 
-    # Start training!
+    samples = gym.compute_samples(policy=initial_policy, no_episodes=no_episodes,
+                                  max_length=max_length, flatten=False)
+    v0_samples = []
+    v0 = []
+    for trajectory in samples:
+        v0_samples.append(trajectory[0])
+        reward = 0
+        for t, step in enumerate(trajectory[::-1]):
+            reward = step.reward + gamma*reward
+        v0.append(reward)
+    v0 = np.mean(v0)
+    samples = list(itertools.chain(*samples))
+    print("V0 from samples: {}".format(v0))
+
+
+    def evaluate(sess, gym, policy, runner, max_length, i=0):
+        ### Evaluate
+        l2 = runner.process(sess, iterator=dataset_iterator, output=network.q_loss)
+        print("Q error: {}".format(l2))
+
+        gym.evaluate(sess, runner, policy, gamma=gamma, no_episodes=1, max_length=max_length, display=display)
+        res, _ = gym.evaluate(sess, runner, policy, gamma=gamma, no_episodes=50, max_length=max_length, display=False)
+        print("step {} \t Reward/std : {} +/- {}".format(i, res[0], res[1]))
+
+        return res
+
     with tf.Session() as sess:
 
         writer = tf.summary.FileWriter("/home/fstrub/Projects/bpi_continuous/graph_log", sess.graph)
+        runner = Evaluator(mini_batch_size, "", writer=writer)
         sess.run(tf.global_variables_initializer())
 
-        # equalize q/policy networks
-        runner.execute(sess, output=network.update_networks, sample={"tau": 1.0})
-
-        samples = gym.compute_samples(policy=initial_policy, no_episodes=no_episodes, max_length=max_length)
         dataset_iterator = Dataset(samples)
+        dataset_v0_iterator = Dataset(v0_samples)
 
-        # sample = {'state': np.array([[ 0.98905226,  0.14756566,  0.23730638]]), 'next_state': np.array([[ 0.98508077,  0.17209263,  0.49694141]]), 'reward': np.array([-0.02855317]), 'action': np.array([[ 0.99307193]])}
-        # sess.run([], feed_dict={ key+":0" : value for key, value in sample.items()})
+        pretrained_dataset_iterator = DatasetPretrained(samples)
+        for _ in range(no_pretrained_policy):
+            [loss] = runner.process(sess, iterator=pretrained_dataset_iterator,
+                           output=network.pretrain_policy_loss,
+                           optimizer=pretrained_policy_optimizer)
+            print("CE policy loss (training): {}".format(loss))
+        runner.execute(sess, output=network.update_networks, sample={"tau": 1.0})
+        evaluate(sess, gym, network.policy_output, runner, max_length, -1)
 
-        #######################
-        # function evaluator
-        ######################
-
-        def evaluate(sess, gym, policy, runner, max_length, i=0):
-            ### Evaluate
-            l2 = runner.eval_loss(sess, iterator=dataset_iterator, loss=network.q_loss)
-            print("Q error: {}".format(l2))
-
-            gym.evaluate(sess, runner, policy, gamma=gamma, no_episodes=1, max_length=max_length, display=True)
-            res, _ = gym.evaluate(sess, runner, policy, gamma=gamma, no_episodes=50, max_length=max_length, display=False)
-            print("step {} \t Reward/std : {} +/- {}".format(i, res[0], res[1]))
-
-            return res
 
         #######################
         # First round
         ######################
+
         for _ in range(no_first_q_iteration):
-            runner.train(sess, iterator=dataset_iterator, optimizer=q_optimizer)
-            runner.execute(sess, output=network.q_update, sample={"tau": 1.0})
-            l2 = runner.eval_loss(sess, iterator=dataset_iterator, loss=network.q_loss)
-            print(" - Q error: {}".format(l2))
+            [l2] = runner.process(sess, iterator=dataset_iterator, summary=network.merged,
+                           output=[network.q_loss],
+                           optimizer=q_optimizer)
+            runner.execute(sess, output=network.q_update, sample={"tau": tau})
+            print(" - Q error (train): {}".format(l2))
+
+
+            # [v0, q, q_next] = runner.process(sess, iterator=dataset_v0_iterator, summary=None,
+            #                output=[tf.reduce_mean(network.taylor[0]),
+            #                        tf.reduce_mean(network.q_output),
+            #                        tf.reduce_mean(network.q_next)])
+            #
+            # print(" - v0 : {}".format(v0))
+            # print(" - q : {}".format(q))
+            # print(" - q_next : {}".format(q_next))
+            # print()
 
         evaluate(sess, gym, network.policy_output, runner, max_length)
+
         runner.execute(sess, output=network.update_networks, sample={"tau": 1.0})
-        runner.train(sess, iterator=dataset_iterator, optimizer=policy_optimizer)
-        #evaluate(sess, gym, network.policy_output, runner, max_length)
+        runner.process(sess, iterator=dataset_iterator, optimizer=policy_optimizer)
+        evaluate(sess, gym, network.policy_output, runner, max_length)
 
         #######################
         # Next Rounds
@@ -154,10 +171,11 @@ if __name__ == '__main__':
 
             # Train
             for _ in range(no_network_iteration):
-                runner.train(sess, iterator=dataset_iterator, optimizer=q_optimizer)
-                runner.execute(sess, output=network.update_networks, sample={"tau": 1.0})
-                runner.train(sess, iterator=dataset_iterator, optimizer=policy_optimizer)
-                runner.execute(sess, output=network.update_networks, sample={"tau": 1.0})
+                runner.process(sess, iterator=dataset_iterator,
+                               optimizer=q_optimizer)
+                runner.execute(sess, output=network.q_update, sample={"tau": tau})
+                runner.process(sess, iterator=dataset_iterator, optimizer=policy_optimizer)
+                runner.execute(sess, output=network.policy_update, sample={"tau": tau})
 
             # Evaluate
             evaluate(sess, gym, network.policy_output, runner, max_length, t+1)

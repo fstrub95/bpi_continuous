@@ -3,6 +3,8 @@ from gym import wrappers
 from collections import namedtuple
 import numpy as np
 
+import itertools
+
 Sample = namedtuple('Sample', ['state', 'next_state', 'action', 'reward'])
 
 def create_cholesky_noise(samples):
@@ -56,16 +58,18 @@ class Sampler(object):
         self.action_size = action_size
         self.save_path = save_path
 
-    def compute_samples(self, sess=None, runner=None, policy=None, no_episodes=0, max_length=0, noise_fct=create_normal_noise(0.05), split=False):
+    def compute_samples(self, sess=None, runner=None, policy=None, no_episodes=0, max_length=0, noise_fct=create_normal_noise(0.05), flatten=True):
 
         samples = []
         for i_episode in range(no_episodes):
             state = self.env.reset()
+
+            one_trajectory = []
             for t in range(max_length):
 
                 # Pick the action by using network policy (or random)
                 if sess is None:
-                    action = policy(state)
+                    action = policy.evaluate(state)
                 else:
                     action = runner.execute(sess, policy, {"state":[state]})[0]
                     action += noise_fct(action)
@@ -75,12 +79,16 @@ class Sampler(object):
 
                 # store samples
                 one_sample = Sample(state=state, action=action, reward=reward, next_state=next_state)
-                samples.append(one_sample)
+                one_trajectory.append(one_sample)
 
                 state = next_state
 
                 if done:
                     break
+            samples.append(one_trajectory)
+
+        if flatten:
+            samples = list(itertools.chain(*samples))
 
         return samples
 
@@ -98,7 +106,7 @@ class Sampler(object):
                 next_state, reward, done, info = self.env.step(action)
 
                 if display:
-                    print(action)
+                    # print(action)
                     self.env.render()
 
                 final_reward = reward + gamma*final_reward
