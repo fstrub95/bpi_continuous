@@ -63,14 +63,18 @@ def nn_layer(input_tensor, output_dim, layer_name="mlp", activation=None, use_su
 
 
 # Helper to create multilayer perceptron
-def create_nlp(input, layer_size, activ=tf.nn.relu, use_summary=False):
+def create_nlp(input, layer_size, is_training, activ=tf.nn.relu, use_summary=False):
 
     x = input
     for i, layer in enumerate(layer_size[:-1]):
-        x = nn_layer(x, layer, activation=activ, use_summary=use_summary)
-        # x = tflearn.layers.normalization.batch_normalization(x)
+        x = nn_layer(x, layer, use_summary=use_summary)
+        # x = tf.contrib.layers.batch_norm(x, is_training=is_training, center=True, scale=True)
+        x = activ(x)
+        if use_summary and activ is not None:
+            tf.summary.histogram('activations', x)
 
     x = nn_layer(x, layer_size[-1], activation=None, use_summary=use_summary)
+
 
     return x
 

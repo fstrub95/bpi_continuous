@@ -20,7 +20,7 @@ class Evaluator(object):
         self.network = network
 
 
-    def process(self, sess, iterator, output=[], dico={}, optimizer=None, summary=None):
+    def process(self, sess, iterator, output=[], dico={}, optimizer=None, summary=None, update=None):
 
         if not isinstance(output, list):
             output = [output]
@@ -35,7 +35,8 @@ class Evaluator(object):
             output += [summary]
             use_summary = True
 
-        res = self.__execute__(sess, iterator, output, dico, is_training, use_summary)
+        res = self.__execute__(sess, iterator, output, update, dico, is_training, use_summary)
+
 
         if is_training:
             res = res[1:]
@@ -46,7 +47,7 @@ class Evaluator(object):
         return res
 
 
-    def __execute__(self, sess, iterator, output, dico, is_training, use_summary):
+    def __execute__(self, sess, iterator, output, update, dico, is_training, use_summary):
 
         res = [0.0 for _ in output]
         # Compute the number of required samples
@@ -62,6 +63,9 @@ class Evaluator(object):
             # evaluate the network on the batch
             one_res = self.execute(sess, output, batch)
 
+            if update is not None:
+                self.execute(sess, update, batch)
+
             # process the results
             for i, r in enumerate(one_res):
                 if isinstance(r, np.float32): # Loss
@@ -75,6 +79,14 @@ class Evaluator(object):
             if isinstance(r, float):
                 res[i] = 1.0*r/n_iter
         return res
+
+
+
+
+
+
+
+
 
     def execute(self, sess, output, sample):
         feed_dict = { self.scope + key + ":0" : value for key, value in sample.items() } #if key in self.allow_inputs

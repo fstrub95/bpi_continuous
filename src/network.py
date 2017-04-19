@@ -3,9 +3,14 @@ import numpy as np
 import itertools
 import math
 from network_tools import *
+from tensorflow.python.ops import control_flow_ops
+
+#global_activ = tf.nn.tanh
+q_activ = tf.nn.tanh
+pi_activ = tf.nn.relu
 
 #layer_size + [action_size]
-def create_q_network(state, action, policy, layer_size, taylor_order, training_taylor):
+def create_q_network(state, action, policy, layer_size, taylor_order, training_taylor,is_training):
 
     derivatives = []
     taylor_decomposition = []
@@ -13,7 +18,7 @@ def create_q_network(state, action, policy, layer_size, taylor_order, training_t
     if taylor_order >= 0:
         with tf.variable_scope("zero_order"):
             with tf.variable_scope('V'):
-                zero_order = create_nlp(state, layer_size + [1])
+                zero_order = create_nlp(state, layer_size + [1], activ=q_activ, is_training=is_training)
         taylor_decomposition += [zero_order]
 
         tf.summary.histogram('V0', zero_order)
@@ -22,8 +27,9 @@ def create_q_network(state, action, policy, layer_size, taylor_order, training_t
         action_size = int(action.get_shape()[1])
         with tf.variable_scope('first_order'):
             with tf.variable_scope('grad_q'):
-                taylor_1_input = tf.concat([state, policy], axis=1)
-                grad_q = create_nlp(taylor_1_input, layer_size+[action_size])
+                state_policy = tf.concat([state, policy], axis=1)
+                grad_q = create_nlp(state_policy, layer_size+[action_size], activ=q_activ, is_training=is_training)
+                grad_q = tf.nn.tanh(grad_q) # clip gradient
             diff = action - policy
             first_order = dot_product(grad_q, diff)
         taylor_decomposition += [first_order]
@@ -36,11 +42,12 @@ def create_q_network(state, action, policy, layer_size, taylor_order, training_t
     if taylor_order >= 2:
         action_size = int(action.get_shape()[1])
         with tf.variable_scope('second_order'):
-            taylor_2_input = tf.concat([state, policy], axis=1)
+            state_policy = tf.concat([state, policy], axis=1)
 
             # create lower triangular matrix
             diag_hessian_dim = math.pow(max(action_size-1, 0),2)+1
-            diag_hessian = create_nlp(taylor_2_input, layer_size + [diag_hessian_dim])
+            diag_hessian = create_nlp(state_policy, layer_size + [diag_hessian_dim], activ=q_activ, is_training=is_training)
+            # diag_hessian = tf.nn.tanh(diag_hessian)  # clip hessian
             diag_hessian = tf.matrix_band_part(diag_hessian, -1, 0)
 
             hessian = tf.matmul(diag_hessian, diag_hessian, transpose_b=True)
@@ -64,15 +71,14 @@ def create_q_network(state, action, policy, layer_size, taylor_order, training_t
     return q_output, taylor_decomposition, derivatives
 
 
-def create_policy_network(state, layer_size):
-    policy = create_nlp(state, layer_size)
-
+def create_policy_network(state, layer_size, is_training):
+    policy = create_nlp(state, layer_size, activ=pi_activ, is_training=is_training)
     return policy
 
 
 class Network(object):
 
-    def __init__(self, state_size, action_size, layer_size, gamma, tau, alpha, lmbda, taylor_order):
+    def __init__(self, state_size, action_size, q_layer_size, pi_layer_size, gamma, tau, alpha, lmbda, taylor_order):
 
         ####################
         # Input parameters
@@ -104,16 +110,16 @@ class Network(object):
 
         # Policy network
         with tf.variable_scope('policy'):
-            policy_layer_size = layer_size + [action_size]
+            policy_layer_size = pi_layer_size + [action_size]
 
             # Create a policy network that will be trained
             with tf.variable_scope('policy_network'):
-                self.policy_output = create_policy_network(self._state, policy_layer_size)
+                self.policy_output = create_policy_network(self._state, policy_layer_size, is_training=self._is_training)
                 variable_summaries(self.policy_output)
 
             # Create a mirror policy to store the previous policy
             with tf.variable_scope('policy_mirror_network'):
-                self.policy_mirror = create_policy_network(self._state, policy_layer_size)
+                self.policy_mirror = create_policy_network(self._state, policy_layer_size, is_training=self._is_training)
                 self.policy_mirror = tf.stop_gradient(self.policy_mirror)
                 variable_summaries(self.policy_mirror)
 
@@ -122,20 +128,24 @@ class Network(object):
 
             # create the Q network
             with tf.variable_scope("q_network"):
-                self.q_output, self.taylor, derivatives = create_q_network(self._state, self._action, no_grad_policy, layer_size,
+                self.q_output, self.taylor, derivatives = create_q_network(self._state, self._action, no_grad_policy, q_layer_size,
                                                                            taylor_order=taylor_order,
-                                                                           training_taylor=self._taylor_training)
+                                                                           training_taylor=self._taylor_training,
+                                                                           is_training=self._is_training)
 
             # create the Q target network (for next state). Note that taylor expansion is limited to 0 order
             with tf.variable_scope("q_target_network"):
-                self.q_next, _, _ = create_q_network(self._next_state, None, no_grad_policy, layer_size,
+                self.q_next, _, _ = create_q_network(self._next_state, None, no_grad_policy, q_layer_size,
                                                      taylor_order=0,
-                                                     training_taylor=0)
+                                                     training_taylor=0,
+                                                     is_training=self._is_training)
                 self.q_next = tf.stop_gradient(self.q_next)
 
         ####################
         # Loss of networks
         ####################
+
+
 
         # Compute Q Loss
         with tf.variable_scope('q_loss'):
@@ -153,11 +163,12 @@ class Network(object):
         with tf.variable_scope('policy_loss'):
             with tf.variable_scope('policy_target'):
                 grad_q = derivatives[0]
-                # grad_q = tf.nn.l2_normalize(grad_q, dim=1)
+                #grad_q = tf.nn.l2_normalize(grad_q, dim=1)
+                variable_summaries(grad_q, 'normalize_grad_Q', )
                 grad_q = tf.stop_gradient(grad_q)
 
                 if taylor_order < 2:
-                    self.policy_target = self.policy_mirror + self.alpha * grad_q  # TODO normalize by norm of grad
+                    self.policy_target = self.policy_mirror + self.alpha * grad_q
                 else:
                     hessian = derivatives[1]
                     inv_hessian = tf.matrix_inverse(hessian)
@@ -188,7 +199,7 @@ class Network(object):
             # Copy variable values from current network to the old one
             self.policy_parameters = []
             for cur, target in zip(policy_cur_variables, policy_mir_variables):
-                self.policy_parameters += [target.assign(self._tau*cur + (1-self._tau)*target)]
+                self.policy_parameters += [target.assign(self._tau*cur + (1-self._tau)*target, use_locking=True)]
                 self.policy_update = tf.group(*self.policy_parameters)
 
         # Get policy network variables
@@ -203,7 +214,7 @@ class Network(object):
             # Copy variable values from current network to the old one
             self.q_parameters = []
             for cur, target in zip(q_cur_variables, q_mir_variables):
-                self.q_parameters += [target.assign(self._tau*cur + (1-self._tau)*target)]
+                self.q_parameters += [target.assign(self._tau*cur + (1-self._tau)*target, use_locking=True)]
             self.q_update = tf.group(*self.q_parameters)
 
             self.update_networks = tf.group(self.q_update, self.policy_update)

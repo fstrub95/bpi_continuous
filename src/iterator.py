@@ -132,4 +132,7 @@ class DatasetPretrained(object):
         return {
             "state": self.state[start:end],
             "policy_pretrain_target": self.action[start:end],
+            "next_state": self.next_state[start:end],
+            "action": self.action[start:end],
+            "reward": self.reward[start:end]
         }

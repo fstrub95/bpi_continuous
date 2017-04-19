@@ -71,7 +71,7 @@ class Sampler(object):
                 if sess is None:
                     action = policy.evaluate(state)
                 else:
-                    action = runner.execute(sess, policy, {"state":[state]})[0]
+                    action = runner.execute(sess, policy, {"state":[state], "is_training": False})[0]
                     action += noise_fct(action)
 
                 # Sample environment
@@ -102,7 +102,7 @@ class Sampler(object):
 
             for t in range(max_length):
 
-                action = runner.execute(sess, policy, {"state":[state]})[0]
+                action = runner.execute(sess, policy, {"state":[state], "is_training":False})[0]
                 next_state, reward, done, info = self.env.step(action)
 
                 if display:
@@ -123,7 +123,7 @@ class Sampler(object):
 
         rewards = np.array(rewards)
 
-        return (rewards[:,0].mean(), rewards[:,0].std(), rewards[:,1].mean()), rewards
+        return (rewards[:,0].mean(), rewards[:,0].std()), rewards, rewards[:,1].mean()
 
     #def commit(self):
         #if len(self.save_path):
